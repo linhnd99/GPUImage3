@@ -16,7 +16,14 @@ let package = Package(
     targets: [
         .target(
             name: "GPUImage",
-            resources: [.process("Resources")]
+            resources: [
+                .process("Resources")
+            ],
+            publicHeadersPath: "Operations",
+            cSettings: [
+                .headerSearchPath("Operations"), 
+                .unsafeFlags(["-fmetal-validate"])
+            ]
         ),
         .testTarget(
             name: "GPUImageTests",

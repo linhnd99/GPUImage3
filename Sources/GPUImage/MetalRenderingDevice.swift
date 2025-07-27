@@ -13,6 +13,8 @@ public class MetalRenderingDevice {
     public let shaderLibrary: MTLLibrary
     public let metalPerformanceShadersAreSupported: Bool
 
+    public var injectedShaderLibrary: MTLLibrary?
+
     lazy var passthroughRenderState: MTLRenderPipelineState = {
         let (pipelineState, _, _) = generateRenderPipelineState(
             device: self, vertexFunctionName: "oneInputVertex",

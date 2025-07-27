@@ -75,11 +75,16 @@ func generateRenderPipelineState(
     device: MetalRenderingDevice, vertexFunctionName: String, fragmentFunctionName: String,
     operationName: String
 ) -> (MTLRenderPipelineState, [String: (Int, MTLStructMember)], Int) {
-    guard let vertexFunction = device.shaderLibrary.makeFunction(name: vertexFunctionName) else {
+    guard let vertexFunction = 
+        device.shaderLibrary.makeFunction(name: vertexFunctionName) ?? 
+        device.injectedShaderLibrary?.makeFunction(name: vertexFunctionName)
+        else {
         fatalError("\(operationName): could not compile vertex function \(vertexFunctionName)")
     }
 
-    guard let fragmentFunction = device.shaderLibrary.makeFunction(name: fragmentFunctionName)
+    guard let fragmentFunction = 
+        device.shaderLibrary.makeFunction(name: fragmentFunctionName) ??
+        device.injectedShaderLibrary?.makeFunction(name: fragmentFunctionName)
     else {
         fatalError("\(operationName): could not compile fragment function \(fragmentFunctionName)")
     }

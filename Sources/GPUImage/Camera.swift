@@ -47,26 +47,22 @@ let initialBenchmarkFramesToIgnore = 5
 
 public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBufferDelegate {
 
-    public var location: PhysicalCameraLocation {
-        didSet {
-            // TODO: Swap the camera locations, framebuffers as needed
-        }
-    }
     public var runBenchmark: Bool = false
     public var logFPS: Bool = false
-
+    
+    public private(set) var location: PhysicalCameraLocation
     public let targets = TargetContainer()
     public var delegate: CameraDelegate?
     public let captureSession: AVCaptureSession
     public var orientation: ImageOrientation?
-    public let inputCamera: AVCaptureDevice!
-    let videoInput: AVCaptureDeviceInput!
-    let videoOutput: AVCaptureVideoDataOutput!
+    public var inputCamera: AVCaptureDevice!
+    var videoInput: AVCaptureDeviceInput!
+    var videoOutput: AVCaptureVideoDataOutput!
     var videoTextureCache: CVMetalTextureCache?
 
     var supportsFullYUVRange: Bool = false
     let captureAsYUV: Bool
-    let yuvConversionRenderPipelineState: MTLRenderPipelineState?
+    var yuvConversionRenderPipelineState: MTLRenderPipelineState?
     var yuvLookupTable: [String: (Int, MTLStructMember)] = [:]
     var yuvBufferSize: Int = 0
 
@@ -95,34 +91,8 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
 
         self.captureAsYUV = captureAsYUV
 
-        if let cameraDevice = cameraDevice {
-            self.inputCamera = cameraDevice
-        } else {
-            if let device = location.device() {
-                self.inputCamera = device
-            } else {
-                self.videoInput = nil
-                self.videoOutput = nil
-                self.inputCamera = nil
-                self.yuvConversionRenderPipelineState = nil
-                super.init()
-                throw CameraError()
-            }
-        }
-
-        do {
-            self.videoInput = try AVCaptureDeviceInput(device: inputCamera)
-        } catch {
-            self.videoInput = nil
-            self.videoOutput = nil
-            self.yuvConversionRenderPipelineState = nil
-            super.init()
-            throw error
-        }
-
-        if captureSession.canAddInput(videoInput) {
-            captureSession.addInput(videoInput)
-        }
+        super.init()
+        try self.configDeviceInput(cameraDevice: cameraDevice)
 
         // Add the video frame output
         videoOutput = AVCaptureVideoDataOutput()
@@ -132,9 +102,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
             supportsFullYUVRange = false
             let supportedPixelFormats = videoOutput.availableVideoPixelFormatTypes
             for currentPixelFormat in supportedPixelFormats {
-                if (currentPixelFormat as NSNumber).int32Value
-                    == Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-                {
+                if (currentPixelFormat as NSNumber).int32Value == Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
                     supportsFullYUVRange = true
                 }
             }
@@ -181,12 +149,47 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         captureSession.sessionPreset = sessionPreset
         captureSession.commitConfiguration()
 
-        super.init()
-
         let _ = CVMetalTextureCacheCreate(
             kCFAllocatorDefault, nil, sharedMetalRenderingDevice.device, nil, &videoTextureCache)
 
         videoOutput.setSampleBufferDelegate(self, queue: cameraProcessingQueue)
+    }
+
+    private func configDeviceInput(cameraDevice: AVCaptureDevice? = nil) throws {
+        if let cameraDevice = cameraDevice {
+            self.inputCamera = cameraDevice
+        } else {
+            if let device = location.device() {
+                self.inputCamera = device
+            } else {
+                self.videoInput = nil
+                if videoOutput != nil {
+                    captureSession.removeOutput(videoOutput)
+                    self.videoOutput = nil
+                }
+
+                self.inputCamera = nil
+                self.yuvConversionRenderPipelineState = nil
+                throw CameraError()
+            }
+        }
+
+        do {
+            self.videoInput = try AVCaptureDeviceInput(device: inputCamera)
+        } catch {
+            self.videoInput = nil
+            if videoOutput != nil {
+                captureSession.removeOutput(videoOutput)
+                self.videoOutput = nil
+            }
+
+            self.yuvConversionRenderPipelineState = nil
+            throw error
+        }
+
+        if captureSession.canAddInput(videoInput) {
+            captureSession.addInput(videoInput)
+        }
     }
 
     deinit {
@@ -346,6 +349,22 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     }
 
     public func transmitPreviousImage(to target: ImageConsumer, atIndex: UInt) {
-        // Not needed for camera
+        // Not needed for camcera
+    }
+
+    // MARK: - Public setter
+    public func setLocation(_ location: PhysicalCameraLocation) {
+        self.location = location
+        captureSession.beginConfiguration()
+
+        if videoInput != nil {
+            captureSession.removeInput(videoInput)
+            videoInput = nil
+            inputCamera = nil
+        }
+
+        try? self.configDeviceInput(cameraDevice: nil)
+
+        captureSession.commitConfiguration()
     }
 }

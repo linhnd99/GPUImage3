@@ -14,7 +14,7 @@ public enum PhysicalCameraLocation {
         switch self {
         case .backFacing: return .landscapeRight
         #if os(iOS)
-            case .frontFacing: return .landscapeLeft
+            case .frontFacing: return .landscapeLeftMirrored
         #else
             case .frontFacing: return .portrait
         #endif

@@ -155,11 +155,11 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         videoOutput.setSampleBufferDelegate(self, queue: cameraProcessingQueue)
     }
 
-    private func configDeviceInput(cameraDevice: AVCaptureDevice? = nil) throws {
+    private func configDeviceInput(cameraDevice: AVCaptureDevice? = nil, location: PhysicalCameraLocation? = nil) throws {
         if let cameraDevice = cameraDevice {
             self.inputCamera = cameraDevice
         } else {
-            if let device = location.device() {
+            if let device = (location ?? self.location).device() {
                 self.inputCamera = device
             } else {
                 self.videoInput = nil
@@ -219,7 +219,8 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         CVPixelBufferLockBaseAddress(
             cameraFrame, CVPixelBufferLockFlags(rawValue: CVOptionFlags(0)))
 
-        cameraFrameProcessingQueue.async {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self else { return }
             self.delegate?.didCaptureBuffer(sampleBuffer)
             CVPixelBufferUnlockBaseAddress(
                 cameraFrame, CVPixelBufferLockFlags(rawValue: CVOptionFlags(0)))
@@ -354,17 +355,21 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
 
     // MARK: - Public setter
     public func setLocation(_ location: PhysicalCameraLocation) {
-        self.location = location
-        captureSession.beginConfiguration()
+        cameraProcessingQueue.async { [weak self] in
+            guard let self else { return }
+            captureSession.beginConfiguration()
 
-        if videoInput != nil {
-            captureSession.removeInput(videoInput)
-            videoInput = nil
-            inputCamera = nil
+            if videoInput != nil {
+                captureSession.removeInput(videoInput)
+                videoInput = nil
+                inputCamera = nil
+            }
+
+            try? self.configDeviceInput(cameraDevice: nil, location: location)
+
+            captureSession.commitConfiguration()
+            self.location = location
         }
 
-        try? self.configDeviceInput(cameraDevice: nil)
-
-        captureSession.commitConfiguration()
     }
 }

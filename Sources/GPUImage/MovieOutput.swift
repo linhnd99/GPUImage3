@@ -140,26 +140,34 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
             return
         }
 
+        guard let pixelBufferPool = assetWriterPixelBufferInput.pixelBufferPool else {
+            debugPrint("No pool from pixel buffer input \(frameTime)")
+            return
+        }
+
         var pixelBufferFromPool: CVPixelBuffer? = nil
 
         let pixelBufferStatus = CVPixelBufferPoolCreatePixelBuffer(
-            nil, assetWriterPixelBufferInput.pixelBufferPool!, &pixelBufferFromPool)
+            nil, pixelBufferPool, &pixelBufferFromPool)
         guard let pixelBuffer = pixelBufferFromPool, pixelBufferStatus == kCVReturnSuccess else {
             return
         }
 
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        renderIntoPixelBuffer(pixelBuffer, texture: texture)
+        renderIntoPixelBuffer(pixelBuffer, texture: texture) { [weak self] in
+            defer {
+                CVPixelBufferUnlockBaseAddress(
+                    pixelBuffer, CVPixelBufferLockFlags(rawValue: CVOptionFlags(0)))
+            }
 
-        if !assetWriterPixelBufferInput.append(pixelBuffer, withPresentationTime: frameTime) {
-            print("Problem appending pixel buffer at time: \(frameTime)")
+            guard let self else { return }
+            if !self.assetWriterPixelBufferInput.append(pixelBuffer, withPresentationTime: frameTime) {
+                print("Problem appending pixel buffer at time: \(frameTime)")
+            }
         }
-
-        CVPixelBufferUnlockBaseAddress(
-            pixelBuffer, CVPixelBufferLockFlags(rawValue: CVOptionFlags(0)))
     }
 
-    func renderIntoPixelBuffer(_ pixelBuffer: CVPixelBuffer, texture: Texture) {
+    func renderIntoPixelBuffer(_ pixelBuffer: CVPixelBuffer, texture: Texture, completion: (() -> Void)?) {
         guard let pixelBufferBytes = CVPixelBufferGetBaseAddress(pixelBuffer) else {
             print("Could not get buffer bytes")
             return
@@ -167,10 +175,19 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
 
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
 
-        let outputTexture: Texture
-        if (Int(round(self.size.width)) != texture.texture.width)
-            && (Int(round(self.size.height)) != texture.texture.height)
-        {
+        var outputTexture: Texture?
+        let callback = {
+            guard let outputTexture else {
+                completion?()
+                return 
+            }
+
+            let region = MTLRegionMake2D(0, 0, outputTexture.texture.width, outputTexture.texture.height)
+            outputTexture.texture.getBytes(pixelBufferBytes, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
+            completion?()
+        }
+
+        if (Int(round(self.size.width)) != texture.texture.width) && (Int(round(self.size.height)) != texture.texture.height) {
             let commandBuffer = sharedMetalRenderingDevice.commandQueue.makeCommandBuffer()
 
             outputTexture = Texture(
@@ -180,18 +197,22 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
 
             commandBuffer?.renderQuad(
                 pipelineState: renderPipelineState, inputTextures: [0: texture],
-                outputTexture: outputTexture)
+                outputTexture: outputTexture!)
+            commandBuffer?.addCompletedHandler({ _ in
+                callback()
+            })
             commandBuffer?.commit()
-            commandBuffer?.waitUntilCompleted()
         } else {
+            let commandBuffer = sharedMetalRenderingDevice.commandQueue.makeCommandBuffer()
+            let blitEncoder = commandBuffer?.makeBlitCommandEncoder()
+            blitEncoder?.optimizeContentsForCPUAccess(texture: texture.texture)
+            blitEncoder?.endEncoding()
+            commandBuffer?.addCompletedHandler({ _ in
+                callback()
+            })
+            commandBuffer?.commit()
             outputTexture = texture
         }
-
-        let region = MTLRegionMake2D(
-            0, 0, outputTexture.texture.width, outputTexture.texture.height)
-
-        outputTexture.texture.getBytes(
-            pixelBufferBytes, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
     }
 
     // MARK: -

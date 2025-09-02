@@ -15,7 +15,7 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
 
     let assetWriterPixelBufferInput: AVAssetWriterInputPixelBufferAdaptor
     let size: Size
-    private var isRecording = false
+    public private(set) var isRecording = false
     private var videoEncodingIsFinished = false
     private var audioEncodingIsFinished = false
     private var startTime: CMTime?

@@ -22,6 +22,7 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
     private var previousFrameTime = CMTime.negativeInfinity
     private var previousAudioTime = CMTime.negativeInfinity
     private var encodingLiveVideo: Bool
+    private var assetWriterSemaphore = DispatchSemaphore(value: 1)
     var pixelBuffer: CVPixelBuffer? = nil
 
     var renderPipelineState: MTLRenderPipelineState!
@@ -85,8 +86,11 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
         if let transform = transform {
             assetWriterVideoInput.transform = transform
         }
+
+        assetWriterSemaphore.wait()
         startTime = nil
         self.isRecording = self.assetWriter.startWriting()
+        assetWriterSemaphore.signal()
     }
 
     public func finishRecording(_ completionCallback: (() -> Void)? = nil) {
@@ -100,6 +104,8 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
             }
             return
         }
+
+        assetWriterSemaphore.wait()
         if (self.assetWriter.status == .writing) && (!self.videoEncodingIsFinished) {
             self.videoEncodingIsFinished = true
             self.assetWriterVideoInput.markAsFinished()
@@ -109,12 +115,10 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
             self.assetWriterAudioInput?.markAsFinished()
         }
 
-        // Why can't I use ?? here for the callback?
-        if let callback = completionCallback {
-            self.assetWriter.finishWriting(completionHandler: callback)
-        } else {
-            self.assetWriter.finishWriting {}
-
+        self.assetWriter.finishWriting { [weak self] in
+            guard let self else { return }
+            self.assetWriterSemaphore.signal()
+            completionCallback?()
         }
     }
 
@@ -125,6 +129,7 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
         // If two consecutive times with the same value are added to the movie, it aborts recording, so I bail on that case
         guard frameTime != previousFrameTime else { return }
 
+        assetWriterSemaphore.wait()
         if startTime == nil {
             if assetWriter.status != .writing {
                 assetWriter.startWriting()
@@ -133,6 +138,7 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
             assetWriter.startSession(atSourceTime: frameTime)
             startTime = frameTime
         }
+        assetWriterSemaphore.signal()
 
         // TODO: Run the following on an internal movie recording dispatch queue, context
         guard assetWriterVideoInput.isReadyForMoreMediaData || (!encodingLiveVideo) else {
@@ -219,17 +225,24 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
     // MARK: Audio support
 
     public func activateAudioTrack() {
-        // TODO: Add ability to set custom output settings
+        let audioOutputSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: 44100,
+            AVEncoderBitRateKey: 64000
+        ]
         assetWriterAudioInput = AVAssetWriterInput(
-            mediaType: AVMediaType.audio, outputSettings: nil)
+            mediaType: AVMediaType.audio, outputSettings: audioOutputSettings)
+        assetWriterAudioInput?.expectsMediaDataInRealTime = true
         assetWriter.add(assetWriterAudioInput!)
         assetWriterAudioInput?.expectsMediaDataInRealTime = encodingLiveVideo
     }
 
     public func processAudioBuffer(_ sampleBuffer: CMSampleBuffer) {
-        guard let assetWriterAudioInput = assetWriterAudioInput else { return }
+        guard let assetWriterAudioInput = assetWriterAudioInput, isRecording else { return }
 
         let currentSampleTime = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
+        assetWriterSemaphore.wait()
         if self.startTime == nil {
             if self.assetWriter.status != .writing {
                 self.assetWriter.startWriting()
@@ -238,6 +251,7 @@ public class MovieOutput: ImageConsumer, AudioEncodingTarget {
             self.assetWriter.startSession(atSourceTime: currentSampleTime)
             self.startTime = currentSampleTime
         }
+        assetWriterSemaphore.signal()
 
         guard assetWriterAudioInput.isReadyForMoreMediaData || (!self.encodingLiveVideo) else {
             return

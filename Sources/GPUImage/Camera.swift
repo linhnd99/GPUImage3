@@ -45,7 +45,7 @@ public struct CameraError: Error {
 
 let initialBenchmarkFramesToIgnore = 5
 
-public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBufferDelegate {
+public class Camera: NSObject, ImageSource {
 
     public var runBenchmark: Bool = false
     public var logFPS: Bool = false
@@ -56,8 +56,12 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     public let captureSession: AVCaptureSession
     public var orientation: ImageOrientation?
     public var inputCamera: AVCaptureDevice!
+    public var audioEncodingTarget: AudioEncodingTarget?
+
     var videoInput: AVCaptureDeviceInput!
     var videoOutput: AVCaptureVideoDataOutput!
+    var audioInput: AVCaptureDeviceInput?
+    var audioOutput: AVCaptureAudioDataOutput?
     var videoTextureCache: CVMetalTextureCache?
 
     var supportsFullYUVRange: Bool = false
@@ -71,6 +75,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     let cameraFrameProcessingQueue = DispatchQueue(
         label: "com.sunsetlakesoftware.GPUImage.cameraFrameProcessingQueue",
         attributes: [])
+    let audioProcessingQueue = DispatchQueue(label: "com.linhnd99.audioProcessingQueue")
 
     let framesToIgnore = 5
     var numberOfFramesCaptured = 0
@@ -81,7 +86,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
     public init(
         sessionPreset: AVCaptureSession.Preset, cameraDevice: AVCaptureDevice? = nil,
         location: PhysicalCameraLocation = .backFacing, orientation: ImageOrientation? = nil,
-        captureAsYUV: Bool = true
+        captureAsYUV: Bool = true, supportAudio: Bool = false
     ) throws {
         self.location = location
         self.orientation = orientation
@@ -147,12 +152,33 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         }
 
         captureSession.sessionPreset = sessionPreset
+
+        if supportAudio {
+            self.configCaptureAudio()
+        }
+
         captureSession.commitConfiguration()
 
         let _ = CVMetalTextureCacheCreate(
             kCFAllocatorDefault, nil, sharedMetalRenderingDevice.device, nil, &videoTextureCache)
 
         videoOutput.setSampleBufferDelegate(self, queue: cameraProcessingQueue)
+    }
+
+    private func configCaptureAudio() {
+        if let audioDevice = AVCaptureDevice.default(for: .audio),
+           let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
+           captureSession.canAddInput(audioInput) {
+            captureSession.addInput(audioInput)
+            self.audioInput = audioInput
+        }
+
+        let audioOutput = AVCaptureAudioDataOutput()
+        audioOutput.setSampleBufferDelegate(self, queue: audioProcessingQueue)
+        if captureSession.canAddOutput(audioOutput) {
+            captureSession.addOutput(audioOutput)
+            self.audioOutput = audioOutput
+        }
     }
 
     private func configDeviceInput(cameraDevice: AVCaptureDevice? = nil, location: PhysicalCameraLocation? = nil) throws {
@@ -199,18 +225,69 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         }
     }
 
-    public func captureOutput(
-        _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
+    public func startCapture() {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self else { return }
+            let _ = self.frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
+            self.numberOfFramesCaptured = 0
+            self.totalFrameTimeDuringCapture = 0
+            self.frameRenderingSemaphore.signal()
 
-        guard
-            frameRenderingSemaphore.wait(timeout: DispatchTime.now())
-                == DispatchTimeoutResult.success
-        else { return }
+            if !self.captureSession.isRunning {
+                self.captureSession.startRunning()
+            }
+        }
+    }
+
+    public func stopCapture() {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self else { return }
+            if self.captureSession.isRunning {
+                let _ = self.frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
+
+                self.captureSession.stopRunning()
+                self.frameRenderingSemaphore.signal()
+            }
+        }
+    }
+
+    public func transmitPreviousImage(to target: ImageConsumer, atIndex: UInt) {
+        // Not needed for camcera
+    }
+
+    // MARK: - Public setter
+    public func setLocation(_ location: PhysicalCameraLocation) {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self else { return }
+            captureSession.beginConfiguration()
+
+            if videoInput != nil {
+                captureSession.removeInput(videoInput)
+                videoInput = nil
+                inputCamera = nil
+            }
+
+            try? self.configDeviceInput(cameraDevice: nil, location: location)
+
+            captureSession.commitConfiguration()
+            self.location = location
+        }
+    }
+}
+
+extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output == videoOutput {
+            self.videoCaptureDidOutput(sampleBuffer: sampleBuffer)
+        } else if output == audioOutput {
+            self.audioCaptureDidOutput(sampleBuffer: sampleBuffer)
+        }
+    }
+
+    public func videoCaptureDidOutput(sampleBuffer: CMSampleBuffer) {
+        guard frameRenderingSemaphore.wait(timeout: DispatchTime.now()) == DispatchTimeoutResult.success else { return }
 
         let startTime = CFAbsoluteTimeGetCurrent()
-
         let cameraFrame = CMSampleBufferGetImageBuffer(sampleBuffer)!
         let bufferWidth = CVPixelBufferGetWidth(cameraFrame)
         let bufferHeight = CVPixelBufferGetHeight(cameraFrame)
@@ -328,48 +405,7 @@ public class Camera: NSObject, ImageSource, AVCaptureVideoDataOutputSampleBuffer
         }
     }
 
-    public func startCapture() {
-
-        let _ = frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
-        self.numberOfFramesCaptured = 0
-        self.totalFrameTimeDuringCapture = 0
-        self.frameRenderingSemaphore.signal()
-
-        if !captureSession.isRunning {
-            captureSession.startRunning()
-        }
-    }
-
-    public func stopCapture() {
-        if captureSession.isRunning {
-            let _ = frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
-
-            captureSession.stopRunning()
-            self.frameRenderingSemaphore.signal()
-        }
-    }
-
-    public func transmitPreviousImage(to target: ImageConsumer, atIndex: UInt) {
-        // Not needed for camcera
-    }
-
-    // MARK: - Public setter
-    public func setLocation(_ location: PhysicalCameraLocation) {
-        cameraProcessingQueue.async { [weak self] in
-            guard let self else { return }
-            captureSession.beginConfiguration()
-
-            if videoInput != nil {
-                captureSession.removeInput(videoInput)
-                videoInput = nil
-                inputCamera = nil
-            }
-
-            try? self.configDeviceInput(cameraDevice: nil, location: location)
-
-            captureSession.commitConfiguration()
-            self.location = location
-        }
-
+    public func audioCaptureDidOutput(sampleBuffer: CMSampleBuffer) {
+        audioEncodingTarget?.processAudioBuffer(sampleBuffer)
     }
 }

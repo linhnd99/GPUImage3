@@ -38,6 +38,10 @@ public enum PhysicalCameraLocation {
 
         return AVCaptureDevice.default(for: AVMediaType.video)
     }
+
+    func toggle() -> Self {
+        return self == .backFacing ? .frontFacing : .backFacing
+    }
 }
 
 public struct CameraError: Error {

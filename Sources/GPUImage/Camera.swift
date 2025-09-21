@@ -229,13 +229,6 @@ public class Camera: NSObject, ImageSource {
         }
     }
 
-    deinit {
-        cameraFrameProcessingQueue.sync {
-            self._stopCapture()
-            self.videoOutput?.setSampleBufferDelegate(nil, queue: nil)
-        }
-    }
-
     public func startCapture() {
         cameraFrameProcessingQueue.async { [weak self] in
             guard let self else { return }

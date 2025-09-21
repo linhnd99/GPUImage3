@@ -62,7 +62,7 @@ public class Camera: NSObject, ImageSource {
     public var inputCamera: AVCaptureDevice!
     public var audioEncodingTarget: AudioEncodingTarget?
 
-    var videoInput: AVCaptureDeviceInput!
+    var videoInput: AVCaptureDeviceInput?
     var videoOutput: AVCaptureVideoDataOutput!
     var audioInput: AVCaptureDeviceInput?
     var audioOutput: AVCaptureAudioDataOutput?
@@ -217,7 +217,7 @@ public class Camera: NSObject, ImageSource {
             throw error
         }
 
-        if captureSession.canAddInput(videoInput) {
+        if let videoInput, captureSession.canAddInput(videoInput) {
             captureSession.addInput(videoInput)
         }
     }
@@ -270,8 +270,11 @@ public class Camera: NSObject, ImageSource {
             captureSession.beginConfiguration()
 
             if videoInput != nil {
-                captureSession.removeInput(videoInput)
-                videoInput = nil
+                if let videoInput {
+                    captureSession.removeInput(videoInput)
+                    self.videoInput = nil
+                }
+
                 inputCamera = nil
             }
 
@@ -279,6 +282,29 @@ public class Camera: NSObject, ImageSource {
 
             captureSession.commitConfiguration()
             self.location = location
+        }
+    }
+
+    public func setFlash(isOn: Bool) {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let device = self?.videoInput?.device,
+                  device.hasTorch else {
+                return
+            }
+
+            do {
+                try device.lockForConfiguration()
+
+                if isOn && device.isTorchModeSupported(.on) {
+                    try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+                } else {
+                    device.torchMode = .off
+                }
+
+                device.unlockForConfiguration()
+            } catch {
+                print("Torch could not be used: \(error)")
+            }
         }
     }
 }

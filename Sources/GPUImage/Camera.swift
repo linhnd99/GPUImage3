@@ -264,9 +264,13 @@ public class Camera: NSObject, ImageSource {
     }
 
     // MARK: - Public setter
-    public func setLocation(_ location: PhysicalCameraLocation) {
+    public func setLocation(_ location: PhysicalCameraLocation, completion: ((PhysicalCameraLocation?) -> Void)? = nil) {
         cameraFrameProcessingQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self else {
+                completion?(nil)
+                return
+            }
+
             captureSession.beginConfiguration()
 
             if videoInput != nil {
@@ -278,17 +282,23 @@ public class Camera: NSObject, ImageSource {
                 inputCamera = nil
             }
 
-            try? self.configDeviceInput(cameraDevice: nil, location: location)
-
-            captureSession.commitConfiguration()
-            self.location = location
+            do {
+                try self.configDeviceInput(cameraDevice: nil, location: location)
+                self.location = location
+                captureSession.commitConfiguration()
+                completion?(location)
+            } catch {
+                captureSession.commitConfiguration()
+                completion?(nil)
+            }
         }
     }
 
-    public func setTorch(isOn: Bool) {
+    public func setTorch(isOn: Bool, completion: ((Bool) -> Void)? = nil) {
         cameraFrameProcessingQueue.async { [weak self] in
             guard let device = self?.videoInput?.device,
                   device.hasTorch else {
+                completion?(false)
                 return
             }
 
@@ -305,18 +315,22 @@ public class Camera: NSObject, ImageSource {
             } catch {
                 print("Torch could not be used: \(error)")
             }
+
+            completion?(device.torchMode != .off)
         }
     }
 
-    public func setFlashMode(_ mode: AVCaptureDevice.FlashMode) {
+    public func setFlashMode(_ mode: AVCaptureDevice.FlashMode, completion: ((AVCaptureDevice.FlashMode) -> Void)? = nil) {
         cameraFrameProcessingQueue.async { [weak self] in
             guard let self,
                   let device = self.videoInput?.device,
                   device.hasFlash else {
+                completion?(.off)
                 return
             }
 
             self.capturePhotoOutputFakeSetting.flashMode = mode
+            completion?(mode)
         }
     }
 

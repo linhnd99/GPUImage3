@@ -87,6 +87,9 @@ public class Camera: NSObject, ImageSource {
     var framesSinceLastCheck = 0
     var lastCheckTime = CFAbsoluteTimeGetCurrent()
 
+    private var capturePhotoOutputFake: AVCapturePhotoOutput!
+    private var capturePhotoOutputFakeSetting: AVCapturePhotoSettings!
+
     public init(
         sessionPreset: AVCaptureSession.Preset, cameraDevice: AVCaptureDevice? = nil,
         location: PhysicalCameraLocation = .backFacing, orientation: ImageOrientation? = nil,
@@ -160,6 +163,10 @@ public class Camera: NSObject, ImageSource {
         if supportAudio {
             self.configCaptureAudio()
         }
+
+        capturePhotoOutputFake = AVCapturePhotoOutput()
+        capturePhotoOutputFakeSetting = AVCapturePhotoSettings()
+        captureSession.addOutput(capturePhotoOutputFake)
 
         captureSession.commitConfiguration()
 
@@ -285,7 +292,7 @@ public class Camera: NSObject, ImageSource {
         }
     }
 
-    public func setFlash(isOn: Bool) {
+    public func setTorch(isOn: Bool) {
         cameraFrameProcessingQueue.async { [weak self] in
             guard let device = self?.videoInput?.device,
                   device.hasTorch else {
@@ -306,6 +313,22 @@ public class Camera: NSObject, ImageSource {
                 print("Torch could not be used: \(error)")
             }
         }
+    }
+
+    public func setFlashMode(_ mode: AVCaptureDevice.FlashMode) {
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self,
+                  let device = self.videoInput?.device,
+                  device.hasFlash else {
+                return
+            }
+
+            self.capturePhotoOutputFakeSetting.flashMode = mode
+        }
+    }
+
+    public func startFakeCapturePhoto() {
+        capturePhotoOutputFake.capturePhoto(with: self.capturePhotoOutputFakeSetting, delegate: self)
     }
 }
 
@@ -442,4 +465,9 @@ extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDa
     public func audioCaptureDidOutput(sampleBuffer: CMSampleBuffer) {
         audioEncodingTarget?.processAudioBuffer(sampleBuffer)
     }
+}
+
+// MARK: - AVCapturePhotoCaptureDelegate
+extension Camera: AVCapturePhotoCaptureDelegate {
+
 }

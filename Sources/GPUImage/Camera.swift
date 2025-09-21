@@ -88,7 +88,7 @@ public class Camera: NSObject, ImageSource {
     var lastCheckTime = CFAbsoluteTimeGetCurrent()
 
     private var capturePhotoOutputFake: AVCapturePhotoOutput!
-    private var capturePhotoOutputFakeSetting: AVCapturePhotoSettings!
+    private var flashModeForCapturingPhoto: AVCaptureDevice.FlashMode = .off
 
     public init(
         sessionPreset: AVCaptureSession.Preset, cameraDevice: AVCaptureDevice? = nil,
@@ -165,7 +165,6 @@ public class Camera: NSObject, ImageSource {
         }
 
         capturePhotoOutputFake = AVCapturePhotoOutput()
-        capturePhotoOutputFakeSetting = AVCapturePhotoSettings()
         captureSession.addOutput(capturePhotoOutputFake)
 
         captureSession.commitConfiguration()
@@ -329,13 +328,17 @@ public class Camera: NSObject, ImageSource {
                 return
             }
 
-            self.capturePhotoOutputFakeSetting.flashMode = mode
+            self.flashModeForCapturingPhoto = mode
             completion?(mode)
         }
     }
 
     public func startFakeCapturePhoto() {
-        capturePhotoOutputFake.capturePhoto(with: self.capturePhotoOutputFakeSetting, delegate: self)
+        let setting = AVCapturePhotoSettings(format: [
+            AVVideoCodecKey: AVVideoCodecType.jpeg
+        ])
+        setting.flashMode = flashModeForCapturingPhoto
+        capturePhotoOutputFake.capturePhoto(with: setting, delegate: self)
     }
 }
 
@@ -476,5 +479,6 @@ extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDa
 
 // MARK: - AVCapturePhotoCaptureDelegate
 extension Camera: AVCapturePhotoCaptureDelegate {
-
+    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: (any Error)?) {
+    }
 }

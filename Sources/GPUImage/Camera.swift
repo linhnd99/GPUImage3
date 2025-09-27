@@ -75,7 +75,6 @@ public class Camera: NSObject, ImageSource {
     var yuvBufferSize: Int = 0
 
     let frameRenderingSemaphore = DispatchSemaphore(value: 1)
-    let cameraProcessingQueue = DispatchQueue.global()
     let cameraFrameProcessingQueue = DispatchQueue(
         label: "com.sunsetlakesoftware.GPUImage.cameraFrameProcessingQueue",
         attributes: [])
@@ -172,7 +171,9 @@ public class Camera: NSObject, ImageSource {
         let _ = CVMetalTextureCacheCreate(
             kCFAllocatorDefault, nil, sharedMetalRenderingDevice.device, nil, &videoTextureCache)
 
-        videoOutput.setSampleBufferDelegate(self, queue: cameraProcessingQueue)
+        videoOutput.setSampleBufferDelegate(self, queue: cameraFrameProcessingQueue)
+
+        captureSession.startRunning()
     }
 
     private func configCaptureAudio() {

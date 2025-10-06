@@ -74,7 +74,6 @@ public class Camera: NSObject, ImageSource {
     var yuvLookupTable: [String: (Int, MTLStructMember)] = [:]
     var yuvBufferSize: Int = 0
 
-    let frameRenderingSemaphore = DispatchSemaphore(value: 1)
     let cameraFrameProcessingQueue = DispatchQueue(
         label: "com.sunsetlakesoftware.GPUImage.cameraFrameProcessingQueue",
         attributes: [])
@@ -98,80 +97,80 @@ public class Camera: NSObject, ImageSource {
         self.orientation = orientation
 
         self.captureSession = AVCaptureSession()
-        self.captureSession.beginConfiguration()
 
         self.captureAsYUV = captureAsYUV
 
         super.init()
-        try self.configDeviceInput(cameraDevice: cameraDevice)
+        cameraFrameProcessingQueue.async { [weak self] in
+            guard let self else { return }
+            self.captureSession.beginConfiguration()
+            try? self.configDeviceInput(cameraDevice: cameraDevice)
 
-        // Add the video frame output
-        videoOutput = AVCaptureVideoDataOutput()
-        videoOutput.alwaysDiscardsLateVideoFrames = false
+            // Add the video frame output
+            self.videoOutput = AVCaptureVideoDataOutput()
+            self.videoOutput.alwaysDiscardsLateVideoFrames = false
 
-        if captureAsYUV {
-            supportsFullYUVRange = false
-            let supportedPixelFormats = videoOutput.availableVideoPixelFormatTypes
-            for currentPixelFormat in supportedPixelFormats {
-                if (currentPixelFormat as NSNumber).int32Value == Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
-                    supportsFullYUVRange = true
+            if captureAsYUV {
+                self.supportsFullYUVRange = false
+                let supportedPixelFormats = self.videoOutput.availableVideoPixelFormatTypes
+                for currentPixelFormat in supportedPixelFormats {
+                    if (currentPixelFormat as NSNumber).int32Value == Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
+                        self.supportsFullYUVRange = true
+                    }
                 }
-            }
-            if supportsFullYUVRange {
-                let (pipelineState, lookupTable, bufferSize) = generateRenderPipelineState(
-                    device: sharedMetalRenderingDevice, vertexFunctionName: "twoInputVertex",
-                    fragmentFunctionName: "yuvConversionFullRangeFragment",
-                    operationName: "YUVToRGB")
-                self.yuvConversionRenderPipelineState = pipelineState
-                self.yuvLookupTable = lookupTable
-                self.yuvBufferSize = bufferSize
-                videoOutput.videoSettings = [
-                    kCVPixelBufferMetalCompatibilityKey as String: true,
-                    kCVPixelBufferPixelFormatTypeKey as String: NSNumber(
-                        value: Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)),
-                ]
+                if self.supportsFullYUVRange {
+                    let (pipelineState, lookupTable, bufferSize) = generateRenderPipelineState(
+                        device: sharedMetalRenderingDevice, vertexFunctionName: "twoInputVertex",
+                        fragmentFunctionName: "yuvConversionFullRangeFragment",
+                        operationName: "YUVToRGB")
+                    self.yuvConversionRenderPipelineState = pipelineState
+                    self.yuvLookupTable = lookupTable
+                    self.yuvBufferSize = bufferSize
+                    self.videoOutput.videoSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String: NSNumber(
+                            value: Int32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)),
+                    ]
+                } else {
+                    let (pipelineState, lookupTable, bufferSize) = generateRenderPipelineState(
+                        device: sharedMetalRenderingDevice, vertexFunctionName: "twoInputVertex",
+                        fragmentFunctionName: "yuvConversionVideoRangeFragment",
+                        operationName: "YUVToRGB")
+                    self.yuvConversionRenderPipelineState = pipelineState
+                    self.yuvLookupTable = lookupTable
+                    self.yuvBufferSize = bufferSize
+                    self.videoOutput.videoSettings = [
+                        kCVPixelBufferPixelFormatTypeKey as String: NSNumber(
+                            value: Int32(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)),
+                    ]
+                }
             } else {
-                let (pipelineState, lookupTable, bufferSize) = generateRenderPipelineState(
-                    device: sharedMetalRenderingDevice, vertexFunctionName: "twoInputVertex",
-                    fragmentFunctionName: "yuvConversionVideoRangeFragment",
-                    operationName: "YUVToRGB")
-                self.yuvConversionRenderPipelineState = pipelineState
-                self.yuvLookupTable = lookupTable
-                self.yuvBufferSize = bufferSize
-                videoOutput.videoSettings = [
-                    kCVPixelBufferMetalCompatibilityKey as String: true,
+                self.yuvConversionRenderPipelineState = nil
+                self.videoOutput.videoSettings = [
                     kCVPixelBufferPixelFormatTypeKey as String: NSNumber(
-                        value: Int32(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)),
+                        value: Int32(kCVPixelFormatType_32BGRA)),
                 ]
             }
-        } else {
-            self.yuvConversionRenderPipelineState = nil
-            videoOutput.videoSettings = [
-                kCVPixelBufferMetalCompatibilityKey as String: true,
-                kCVPixelBufferPixelFormatTypeKey as String: NSNumber(
-                    value: Int32(kCVPixelFormatType_32BGRA)),
-            ]
+
+            if self.captureSession.canAddOutput(self.videoOutput) {
+                self.captureSession.addOutput(self.videoOutput)
+            }
+
+            self.captureSession.sessionPreset = sessionPreset
+
+            if supportAudio {
+                self.configCaptureAudio()
+            }
+
+            self.capturePhotoOutputFake = AVCapturePhotoOutput()
+            self.captureSession.addOutput(self.capturePhotoOutputFake)
+
+            self.captureSession.commitConfiguration()
+
+            let _ = CVMetalTextureCacheCreate(
+                kCFAllocatorDefault, nil, sharedMetalRenderingDevice.device, nil, &self.videoTextureCache)
+
+            self.videoOutput.setSampleBufferDelegate(self, queue: self.cameraFrameProcessingQueue)
         }
-
-        if captureSession.canAddOutput(videoOutput) {
-            captureSession.addOutput(videoOutput)
-        }
-
-        captureSession.sessionPreset = sessionPreset
-
-        if supportAudio {
-            self.configCaptureAudio()
-        }
-
-        capturePhotoOutputFake = AVCapturePhotoOutput()
-        captureSession.addOutput(capturePhotoOutputFake)
-
-        captureSession.commitConfiguration()
-
-        let _ = CVMetalTextureCacheCreate(
-            kCFAllocatorDefault, nil, sharedMetalRenderingDevice.device, nil, &videoTextureCache)
-
-        videoOutput.setSampleBufferDelegate(self, queue: cameraFrameProcessingQueue)
     }
 
     private func configCaptureAudio() {
@@ -230,10 +229,8 @@ public class Camera: NSObject, ImageSource {
     public func startCapture() {
         cameraFrameProcessingQueue.async { [weak self] in
             guard let self else { return }
-            let _ = self.frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
             self.numberOfFramesCaptured = 0
             self.totalFrameTimeDuringCapture = 0
-            self.frameRenderingSemaphore.signal()
 
             if !self.captureSession.isRunning {
                 self.captureSession.startRunning()
@@ -250,10 +247,11 @@ public class Camera: NSObject, ImageSource {
 
     private func _stopCapture() {
         if self.captureSession.isRunning {
-            let _ = self.frameRenderingSemaphore.wait(timeout: DispatchTime.distantFuture)
-
             self.captureSession.stopRunning()
-            self.frameRenderingSemaphore.signal()
+        }
+
+        if let videoTextureCache {
+            CVMetalTextureCacheFlush(videoTextureCache, 0)
         }
     }
 
@@ -351,116 +349,117 @@ extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDa
     }
 
     public func videoCaptureDidOutput(sampleBuffer: CMSampleBuffer) {
-        guard frameRenderingSemaphore.wait(timeout: DispatchTime.now()) == DispatchTimeoutResult.success else { return }
+        autoreleasepool { [weak self] in
+            guard let self else { return }
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let cameraFrame = CMSampleBufferGetImageBuffer(sampleBuffer)!
+            let bufferWidth = CVPixelBufferGetWidth(cameraFrame)
+            let bufferHeight = CVPixelBufferGetHeight(cameraFrame)
+            let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-        let startTime = CFAbsoluteTimeGetCurrent()
-        let cameraFrame = CMSampleBufferGetImageBuffer(sampleBuffer)!
-        let bufferWidth = CVPixelBufferGetWidth(cameraFrame)
-        let bufferHeight = CVPixelBufferGetHeight(cameraFrame)
-        let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            self.delegate?.didCaptureBuffer(sampleBuffer)
 
-        self.delegate?.didCaptureBuffer(sampleBuffer)
+            let texture: Texture?
+            if self.captureAsYUV {
+                var luminanceTextureRef: CVMetalTexture? = nil
+                var chrominanceTextureRef: CVMetalTexture? = nil
+                // Luminance plane
+                let _ = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .r8Unorm,
+                    bufferWidth, bufferHeight, 0, &luminanceTextureRef)
+                // Chrominance plane
+                let _ = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .rg8Unorm,
+                    bufferWidth / 2, bufferHeight / 2, 1, &chrominanceTextureRef)
 
-        let texture: Texture?
-        if self.captureAsYUV {
-            var luminanceTextureRef: CVMetalTexture? = nil
-            var chrominanceTextureRef: CVMetalTexture? = nil
-            // Luminance plane
-            let _ = CVMetalTextureCacheCreateTextureFromImage(
-                kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .r8Unorm,
-                bufferWidth, bufferHeight, 0, &luminanceTextureRef)
-            // Chrominance plane
-            let _ = CVMetalTextureCacheCreateTextureFromImage(
-                kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .rg8Unorm,
-                bufferWidth / 2, bufferHeight / 2, 1, &chrominanceTextureRef)
+                if let concreteLuminanceTextureRef = luminanceTextureRef,
+                    let concreteChrominanceTextureRef = chrominanceTextureRef,
+                    let luminanceTexture = CVMetalTextureGetTexture(concreteLuminanceTextureRef),
+                    let chrominanceTexture = CVMetalTextureGetTexture(concreteChrominanceTextureRef)
+                {
 
-            if let concreteLuminanceTextureRef = luminanceTextureRef,
-                let concreteChrominanceTextureRef = chrominanceTextureRef,
-                let luminanceTexture = CVMetalTextureGetTexture(concreteLuminanceTextureRef),
-                let chrominanceTexture = CVMetalTextureGetTexture(concreteChrominanceTextureRef)
-            {
+                    let conversionMatrix: Matrix3x3
+                    if self.supportsFullYUVRange {
+                        conversionMatrix = colorConversionMatrix601FullRangeDefault
+                    } else {
+                        conversionMatrix = colorConversionMatrix601Default
+                    }
 
-                let conversionMatrix: Matrix3x3
-                if self.supportsFullYUVRange {
-                    conversionMatrix = colorConversionMatrix601FullRangeDefault
+                    let outputWidth: Int
+                    let outputHeight: Int
+                    if (self.orientation ?? self.location.imageOrientation()).rotationNeeded(
+                        for: .portrait
+                    ).flipsDimensions() {
+                        outputWidth = bufferHeight
+                        outputHeight = bufferWidth
+                    } else {
+                        outputWidth = bufferWidth
+                        outputHeight = bufferHeight
+                    }
+                    let outputTexture = Texture(
+                        device: sharedMetalRenderingDevice.device, orientation: .portrait,
+                        width: outputWidth, height: outputHeight,
+                        timingStyle: .videoFrame(timestamp: Timestamp(currentTime)))
+
+                    convertYUVToRGB(
+                        pipelineState: self.yuvConversionRenderPipelineState!,
+                        lookupTable: self.yuvLookupTable, bufferSize: self.yuvBufferSize,
+                        luminanceTexture: Texture(
+                            orientation: self.orientation ?? self.location.imageOrientation(),
+                            texture: luminanceTexture),
+                        chrominanceTexture: Texture(
+                            orientation: self.orientation ?? self.location.imageOrientation(),
+                            texture: chrominanceTexture),
+                        resultTexture: outputTexture, colorConversionMatrix: conversionMatrix)
+                    texture = outputTexture
                 } else {
-                    conversionMatrix = colorConversionMatrix601Default
+                    texture = nil
+                }
+                luminanceTextureRef = nil
+                chrominanceTextureRef = nil
+            } else {
+                var textureRef: CVMetalTexture? = nil
+                let _ = CVMetalTextureCacheCreateTextureFromImage(
+                    kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .bgra8Unorm,
+                    bufferWidth, bufferHeight, 0, &textureRef)
+                if let concreteTexture = textureRef,
+                    let cameraTexture = CVMetalTextureGetTexture(concreteTexture)
+                {
+                    texture = Texture(
+                        orientation: self.orientation ?? self.location.imageOrientation(),
+                        texture: cameraTexture,
+                        timingStyle: .videoFrame(timestamp: Timestamp(currentTime)))
+                } else {
+                    texture = nil
+                }
+            }
+
+            if texture != nil {
+                self.updateTargetsWithTexture(texture!)
+            }
+
+            if self.runBenchmark {
+                self.numberOfFramesCaptured += 1
+                if self.numberOfFramesCaptured > initialBenchmarkFramesToIgnore {
+                    let currentFrameTime = (CFAbsoluteTimeGetCurrent() - startTime)
+                    self.totalFrameTimeDuringCapture += currentFrameTime
+                    print(
+                        "Average frame time : \(1000.0 * self.totalFrameTimeDuringCapture / Double(self.numberOfFramesCaptured - initialBenchmarkFramesToIgnore)) ms"
+                    )
+                    print("Current frame time : \(1000.0 * currentFrameTime) ms")
+                }
+            }
+
+            if self.logFPS {
+                if (CFAbsoluteTimeGetCurrent() - self.lastCheckTime) > 1.0 {
+                    self.lastCheckTime = CFAbsoluteTimeGetCurrent()
+                    print("FPS: \(self.framesSinceLastCheck)")
+                    self.framesSinceLastCheck = 0
                 }
 
-                let outputWidth: Int
-                let outputHeight: Int
-                if (self.orientation ?? self.location.imageOrientation()).rotationNeeded(
-                    for: .portrait
-                ).flipsDimensions() {
-                    outputWidth = bufferHeight
-                    outputHeight = bufferWidth
-                } else {
-                    outputWidth = bufferWidth
-                    outputHeight = bufferHeight
-                }
-                let outputTexture = Texture(
-                    device: sharedMetalRenderingDevice.device, orientation: .portrait,
-                    width: outputWidth, height: outputHeight,
-                    timingStyle: .videoFrame(timestamp: Timestamp(currentTime)))
-
-                convertYUVToRGB(
-                    pipelineState: self.yuvConversionRenderPipelineState!,
-                    lookupTable: self.yuvLookupTable, bufferSize: self.yuvBufferSize,
-                    luminanceTexture: Texture(
-                        orientation: self.orientation ?? self.location.imageOrientation(),
-                        texture: luminanceTexture),
-                    chrominanceTexture: Texture(
-                        orientation: self.orientation ?? self.location.imageOrientation(),
-                        texture: chrominanceTexture),
-                    resultTexture: outputTexture, colorConversionMatrix: conversionMatrix)
-                texture = outputTexture
-            } else {
-                texture = nil
-            }
-        } else {
-            var textureRef: CVMetalTexture? = nil
-            let _ = CVMetalTextureCacheCreateTextureFromImage(
-                kCFAllocatorDefault, self.videoTextureCache!, cameraFrame, nil, .bgra8Unorm,
-                bufferWidth, bufferHeight, 0, &textureRef)
-            if let concreteTexture = textureRef,
-                let cameraTexture = CVMetalTextureGetTexture(concreteTexture)
-            {
-                texture = Texture(
-                    orientation: self.orientation ?? self.location.imageOrientation(),
-                    texture: cameraTexture,
-                    timingStyle: .videoFrame(timestamp: Timestamp(currentTime)))
-            } else {
-                texture = nil
+                self.framesSinceLastCheck += 1
             }
         }
-
-        if texture != nil {
-            self.updateTargetsWithTexture(texture!)
-        }
-
-        if self.runBenchmark {
-            self.numberOfFramesCaptured += 1
-            if self.numberOfFramesCaptured > initialBenchmarkFramesToIgnore {
-                let currentFrameTime = (CFAbsoluteTimeGetCurrent() - startTime)
-                self.totalFrameTimeDuringCapture += currentFrameTime
-                print(
-                    "Average frame time : \(1000.0 * self.totalFrameTimeDuringCapture / Double(self.numberOfFramesCaptured - initialBenchmarkFramesToIgnore)) ms"
-                )
-                print("Current frame time : \(1000.0 * currentFrameTime) ms")
-            }
-        }
-
-        if self.logFPS {
-            if (CFAbsoluteTimeGetCurrent() - self.lastCheckTime) > 1.0 {
-                self.lastCheckTime = CFAbsoluteTimeGetCurrent()
-                print("FPS: \(self.framesSinceLastCheck)")
-                self.framesSinceLastCheck = 0
-            }
-
-            self.framesSinceLastCheck += 1
-        }
-
-        self.frameRenderingSemaphore.signal()
     }
 
     public func audioCaptureDidOutput(sampleBuffer: CMSampleBuffer) {

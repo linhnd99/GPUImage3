@@ -341,6 +341,18 @@ public class Camera: NSObject, ImageSource {
     public func removeAllTargetsAsync() {
         self.cameraFrameProcessingQueue.async { [weak self] in
             self?.removeAllTargets()
+            print("[GPUImage3] camera remove all targets")
+
+            if let videoTextureCache = self?.videoTextureCache {
+                CVMetalTextureCacheFlush(videoTextureCache, 0)
+            }
+        }
+    }
+
+    public func addTargetAsync(_ target: ImageConsumer) {
+        self.cameraFrameProcessingQueue.async { [weak self] in
+            self?.addTarget(target)
+            print("[GPUImage3] camera add target \(target)")
         }
     }
 }
@@ -357,6 +369,7 @@ extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDa
     public func videoCaptureDidOutput(sampleBuffer: CMSampleBuffer) {
         autoreleasepool { [weak self] in
             guard let self else { return }
+            if self.targets.isEmpty { return }
             let startTime = CFAbsoluteTimeGetCurrent()
             let cameraFrame = CMSampleBufferGetImageBuffer(sampleBuffer)!
             let bufferWidth = CVPixelBufferGetWidth(cameraFrame)

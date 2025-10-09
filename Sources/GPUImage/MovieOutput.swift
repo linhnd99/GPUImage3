@@ -6,6 +6,7 @@ public protocol AudioEncodingTarget {
 }
 
 public class MovieOutput: ImageConsumer, AudioEncodingTarget {
+    public private(set) var id: String = UUID().uuidString
     public let sources = SourceContainer()
     public let maximumInputs: UInt = 1
 

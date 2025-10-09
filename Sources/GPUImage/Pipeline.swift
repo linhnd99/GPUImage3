@@ -3,11 +3,13 @@
 import Foundation
 
 public protocol ImageSource {
+    var id: String { get }
     var targets: TargetContainer { get }
     func transmitPreviousImage(to target: ImageConsumer, atIndex: UInt)
 }
 
 public protocol ImageConsumer: AnyObject {
+    var id: String { get }
     var maximumInputs: UInt { get }
     var sources: SourceContainer { get }
 
@@ -49,6 +51,14 @@ extension ImageSource {
             target.removeSourceAtIndex(index)
         }
         targets.removeAll()
+    }
+
+    public func removeTarget(_ target: ImageConsumer) {
+        guard let foundElement = targets.first(where: { $0.0.id == target.id }) else {
+            return
+        }
+        foundElement.0.removeSourceAtIndex(foundElement.1)
+        targets.remove(foundElement.0)
     }
 
     public func updateTargetsWithTexture(_ texture: Texture) {
@@ -134,6 +144,12 @@ public class TargetContainer: Sequence {
             self.targets.removeAll()
         }
     }
+
+    public func remove(_ target: ImageConsumer) {
+        dispatchQueue.async {
+            self.targets.removeAll(where: { $0.value?.id == target.id })
+        }
+    }
 }
 
 public class SourceContainer {
@@ -171,6 +187,7 @@ public class SourceContainer {
 }
 
 public class ImageRelay: ImageProcessingOperation {
+    public private(set) var id: String = UUID().uuidString
     public var newImageCallback: ((Texture) -> Void)?
 
     public let sources = SourceContainer()

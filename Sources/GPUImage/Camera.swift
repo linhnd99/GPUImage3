@@ -50,7 +50,7 @@ public struct CameraError: Error {
 let initialBenchmarkFramesToIgnore = 5
 
 public class Camera: NSObject, ImageSource {
-
+    public private(set) var id: String = UUID().uuidString
     public var runBenchmark: Bool = false
     public var logFPS: Bool = false
     
@@ -255,7 +255,7 @@ public class Camera: NSObject, ImageSource {
         }
     }
 
-    public func transmitPreviousImage(to target: ImageConsumer, atIndex: UInt) {
+    public func transmitPreviousImage(to target: any ImageConsumer, atIndex: UInt) {
         // Not needed for camcera
     }
 
@@ -353,6 +353,13 @@ public class Camera: NSObject, ImageSource {
         self.cameraFrameProcessingQueue.async { [weak self] in
             self?.addTarget(target)
             print("[GPUImage3] camera add target \(target)")
+        }
+    }
+
+    public func removeTargetAsync(_ target: ImageConsumer) {
+        self.cameraFrameProcessingQueue.async { [weak self] in
+            self?.removeTarget(target)
+            print("[GPUImage3] camera remove target \(target)")
         }
     }
 }

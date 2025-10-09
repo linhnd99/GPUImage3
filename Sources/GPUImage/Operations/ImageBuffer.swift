@@ -1,5 +1,8 @@
+import Foundation
+
 public class ImageBuffer: ImageProcessingOperation {
     // TODO: Dynamically release textures on buffer resize
+    public var id: String = UUID().uuidString
     public var bufferSize: UInt = 1
     public var activatePassthroughOnNextFrame = true
 

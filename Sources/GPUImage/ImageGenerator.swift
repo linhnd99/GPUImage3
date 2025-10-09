@@ -1,4 +1,7 @@
+import Foundation
+
 public class ImageGenerator: ImageSource {
+    public private(set) var id: String = UUID().uuidString
     public var size: Size
 
     public let targets = TargetContainer()

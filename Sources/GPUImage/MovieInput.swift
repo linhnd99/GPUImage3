@@ -2,6 +2,7 @@ import AVFoundation
 import Metal
 
 public class MovieInput: ImageSource {
+    public private(set) var id: String = UUID().uuidString
     public let targets = TargetContainer()
     public var runBenchmark = false
 

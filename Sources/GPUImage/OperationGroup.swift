@@ -1,4 +1,8 @@
+import Foundation
+
 open class OperationGroup: ImageProcessingOperation {
+    public var id: String = UUID().uuidString
+
     let inputImageRelay = ImageRelay()
     let outputImageRelay = ImageRelay()
 

@@ -13,7 +13,7 @@ public func defaultVertexFunctionNameForInputs(_ inputCount: UInt) -> String {
 }
 
 open class BasicOperation: ImageProcessingOperation {
-
+    public var id: String = UUID().uuidString
     public let maximumInputs: UInt
     public let targets = TargetContainer()
     public let sources = SourceContainer()

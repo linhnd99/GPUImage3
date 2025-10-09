@@ -14,6 +14,7 @@ public enum PictureFileFormat {
 }
 
 public class PictureOutput: ImageConsumer {
+    public private(set) var id: String = UUID().uuidString
     public var encodedImageAvailableCallback: ((Data) -> Void)?
     public var encodedImageFormat: PictureFileFormat = .png
     public var imageAvailableCallback: ((PlatformImageType) -> Void)?

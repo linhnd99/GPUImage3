@@ -2,7 +2,7 @@ import Foundation
 import MetalKit
 
 public class RenderView: MTKView, ImageConsumer {
-
+    public private(set) var id: String = UUID().uuidString
     public let sources = SourceContainer()
     public let maximumInputs: UInt = 1
     var currentTexture: Texture?

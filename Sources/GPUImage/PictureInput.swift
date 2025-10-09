@@ -7,6 +7,7 @@ import MetalKit
 #endif
 
 public class PictureInput: ImageSource {
+    public private(set) var id: String = UUID().uuidString
     public let targets = TargetContainer()
     var internalTexture: Texture?
     var hasProcessedImage: Bool = false

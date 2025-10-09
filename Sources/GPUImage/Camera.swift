@@ -337,6 +337,12 @@ public class Camera: NSObject, ImageSource {
         setting.flashMode = flashModeForCapturingPhoto
         capturePhotoOutputFake.capturePhoto(with: setting, delegate: self)
     }
+
+    public func removeAllTargetsAsync() {
+        self.cameraFrameProcessingQueue.async { [weak self] in
+            self?.removeAllTargets()
+        }
+    }
 }
 
 extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {

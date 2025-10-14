@@ -2,10 +2,6 @@ import AVFoundation
 import Foundation
 import Metal
 
-public protocol CameraDelegate {
-    func didCaptureBuffer(_ sampleBuffer: CMSampleBuffer)
-}
-
 public enum PhysicalCameraLocation {
     case backFacing
     case frontFacing
@@ -56,7 +52,6 @@ public class Camera: NSObject, ImageSource {
     
     public private(set) var location: PhysicalCameraLocation
     public let targets = TargetContainer()
-    public var delegate: CameraDelegate?
     public let captureSession: AVCaptureSession
     public var orientation: ImageOrientation?
     public var inputCamera: AVCaptureDevice!
@@ -382,8 +377,6 @@ extension Camera: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDa
             let bufferWidth = CVPixelBufferGetWidth(cameraFrame)
             let bufferHeight = CVPixelBufferGetHeight(cameraFrame)
             let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-
-            self.delegate?.didCaptureBuffer(sampleBuffer)
 
             let texture: Texture?
             if self.captureAsYUV {

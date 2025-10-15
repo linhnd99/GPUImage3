@@ -25,6 +25,11 @@ public enum PhysicalCameraLocation {
     }
 
     func device() -> AVCaptureDevice? {
+        if #available(iOS 13.0, *),
+           let device = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: self.captureDevicePosition()) {
+            return device
+        }
+
         let devices = AVCaptureDevice.devices(for: AVMediaType.video)
         for case let device in devices {
             if device.position == self.captureDevicePosition() {
